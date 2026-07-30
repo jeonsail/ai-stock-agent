@@ -176,8 +176,11 @@ if 'analysis_result' in st.session_state:
                         try:
                             df, valid_ticker, sym = get_stock_data(t, days=30)
                             if not df.empty and all(k in df.columns for k in ['Open', 'High', 'Low', 'Close']):
+                                # X축 날짜를 문자열 포맷(YYYY-MM-DD)으로 변환
+                                x_dates = df.index.strftime('%Y-%m-%d')
+                                
                                 fig = go.Figure(data=[go.Candlestick(
-                                    x=df.index,
+                                    x=x_dates,
                                     open=df['Open'],
                                     high=df['High'],
                                     low=df['Low'],
@@ -191,6 +194,8 @@ if 'analysis_result' in st.session_state:
                                     margin=dict(l=10, r=10, t=40, b=10),
                                     height=350
                                 )
+                                # X축을 category형으로 설정해 비영업일(휴장일) 공백 제거
+                                fig.update_xaxes(type='category', nticks=6)
                                 fig.update_yaxes(autorange=True, fixedrange=False, tickformat="d")
                                 st.plotly_chart(fig, use_container_width=True)
                         except Exception as e:
@@ -229,18 +234,21 @@ with tab4:
                     if df_a.empty or df_b.empty:
                         st.error("종목 데이터를 가져올 수 없습니다. 입력한 종목명을 다시 확인해 주세요.")
                     else:
+                        x_dates_a = df_a.index.strftime('%Y-%m-%d')
+                        x_dates_b = df_b.index.strftime('%Y-%m-%d')
+
                         fig = make_subplots(rows=1, cols=2, subplot_titles=(
                             f"{stock_a_input} ({stock_a}) 주가 ({sym_a})",
                             f"{stock_b_input} ({stock_b}) 주가 ({sym_b})"
                         ))
                         
                         fig.add_trace(go.Candlestick(
-                            x=df_a.index, open=df_a['Open'], high=df_a['High'], low=df_a['Low'], close=df_a['Close'],
+                            x=x_dates_a, open=df_a['Open'], high=df_a['High'], low=df_a['Low'], close=df_a['Close'],
                             name=f"{stock_a_input}"
                         ), row=1, col=1)
                         
                         fig.add_trace(go.Candlestick(
-                            x=df_b.index, open=df_b['Open'], high=df_b['High'], low=df_b['Low'], close=df_b['Close'],
+                            x=x_dates_b, open=df_b['Open'], high=df_b['High'], low=df_b['Low'], close=df_b['Close'],
                             name=f"{stock_b_input}"
                         ), row=1, col=2)
                         
@@ -251,6 +259,8 @@ with tab4:
                             showlegend=False,
                             margin=dict(l=10, r=10, t=40, b=10)
                         )
+                        # X축 category형 적용 (휴장일 제거) 및 Y축 300000 포맷팅
+                        fig.update_xaxes(type='category', nticks=6)
                         fig.update_yaxes(autorange=True, fixedrange=False, tickformat="d")
                         st.plotly_chart(fig, use_container_width=True)
                         
