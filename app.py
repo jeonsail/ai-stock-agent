@@ -3,9 +3,8 @@ import requests
 import google.generativeai as genai
 import yfinance as yf
 import pandas as pd
+import re
 from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
-import urllib.parse
 
 # Page Configuration
 st.set_page_config(page_title="AI Hot 뉴스 & 주식 분석 에이전트", page_icon="📈", layout="wide")
@@ -15,47 +14,35 @@ gemini_key = st.secrets.get("GEMINI_KEY", "")
 naver_client_id = st.secrets.get("NAVER_CLIENT_ID", "")
 naver_client_secret = st.secrets.get("NAVER_CLIENT_SECRET", "")
 
-# 해외 주요 종목 맵핑
-OVERSEAS_MAP = {
+# 주요 종목 한글-티커 맵핑 테이블
+STOCK_MAP = {
+    # 국내 주요 종목
+    "삼성전자": "005930.KS", "SK하이닉스": "000660.KS", "한미반도체": "042700.KS",
+    "현대차": "005380.KS", "네이버": "035420.KS", "NAVER": "035420.KS", "카카오": "035720.KS",
+    "LG에너지솔루션": "373220.KS", "삼성바이오로직스": "207940.KS", "알테오젠": "196170.KQ",
+    "에코프로비엠": "247540.KQ", "에코프로": "086520.KQ", "포스코홀딩스": "005490.KS",
+    
+    # 해외 주요 종목
     "엔비디아": "NVDA", "인텔": "INTC", "애플": "AAPL", "테슬라": "TSLA",
     "마이크로소프트": "MSFT", "구글": "GOOGL", "알파벳": "GOOGL", "아마존": "AMZN",
-    "메타": "META", "AMD": "AMD", "TSMC": "TSM", "브로드컴": "AVGO", "ASML": "ASML"
+    "메타": "META", "AMD": "AMD", "TSMC": "TSM", "브로드컴": "AVGO", "ASML": "ASML",
+    "마이크론": "MU", "마이크론 테크놀로지": "MU", "퀄컴": "QCOM"
 }
-
-# 한글 종목명으로 네이버 증권에서 종목코드 자동 검색
-@st.cache_data
-def search_krx_ticker(keyword):
-    try:
-        url = f"https://finance.naver.com/search/searchList.naver?query={urllib.parse.quote(keyword, encoding='euc-kr')}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers)
-        soup = BeautifulSoup(res.text, "html.parser")
-        
-        target = soup.select_one("td.tit > a")
-        if target:
-            code = target['href'].split("code=")[-1]
-            return f"{code}.KS"
-    except Exception:
-        pass
-    return None
 
 # 주가 데이터 가져오기 함수
 def get_stock_data(ticker_input, days=30):
     ticker_clean = ticker_input.strip()
     
-    if ticker_clean in OVERSEAS_MAP:
-        ticker = OVERSEAS_MAP[ticker_clean]
+    if ticker_clean in STOCK_MAP:
+        ticker = STOCK_MAP[ticker_clean]
     elif len(ticker_clean) == 6 and ticker_clean.isdigit():
         ticker = f"{ticker_clean}.KS"
-    elif ticker_clean.isupper() and ("." in ticker_clean or len(ticker_clean) <= 5):
-        ticker = ticker_clean
     else:
-        searched_ticker = search_krx_ticker(ticker_clean)
-        ticker = searched_ticker if searched_ticker else ticker_clean.upper()
+        ticker = ticker_clean.upper()
         
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
-    df = yf.download(ticker, start=start_date, end=end_date)
+    df = yf.download(ticker, start=start_date, end=end_date, progress=False)
     return df, ticker
 
 # 네이버 뉴스 수집 함수
@@ -71,7 +58,7 @@ def get_naver_news(keyword, client_id, client_secret):
         return response.json().get("items", [])
     return []
 
-# 👈 [좌측 사이드바 구성] API 입력란을 지우고 관심 분야 입력으로 교체
+# 👈 [좌측 사이드바 구성]
 with st.sidebar:
     st.header("🔍 관심 분야 입력")
     keyword = st.text_input("분석할 키워드를 입력하세요", placeholder="예: 반도체, 2차전지, 로봇 등")
@@ -95,6 +82,7 @@ if analyze_btn:
         st.warning("사이드바에 관심 분야/키워드를 입력해 주세요.")
     else:
         genai.configure(api_key=gemini_key)
+        # ⚡️ Gemini 3.5 모델 적용
         model = genai.GenerativeModel('gemini-3.5-flash')
         
         with st.spinner(f"'{keyword}' 관련 최신 뉴스를 수집하고 AI가 시장을 분석 중입니다..."):
@@ -125,7 +113,7 @@ if analyze_btn:
                    - **수혜 강도:** 🔥🔥
                    - **추천 사유:**
 
-                ## 🇰🇷 추천 국내 주식 (한국 - 6자리 코드.KS)
+                ## 🇰🇷 추천 국내 주식 (한국)
                 1. **[종목명] (티커: 000000.KS)**
                    - **수혜 강도:** 🔥🔥🔥
                    - **추천 사유:**
@@ -149,6 +137,22 @@ if 'analysis_result' in st.session_state:
         st.markdown("## 🌐 해외 & 국내 추천 종목 및 분석")
         if "## 🌐" in result_text:
             st.markdown("## 🌐" + result_text.split("## 🌐")[1])
+            
+            tickers = re.findall(r'티커:\s*([A-Za-z0-9.]+)', result_text)
+            if tickers:
+                st.markdown("---")
+                st.subheader("📈 추천 종목 최근 30일 주가 차트")
+                chart_cols = st.columns(len(tickers))
+                for idx, t in enumerate(tickers):
+                    with chart_cols[idx % len(chart_cols)]:
+                        try:
+                            df, valid_ticker = get_stock_data(t, days=30)
+                            if not df.empty:
+                                close_s = df['Close'].squeeze()
+                                st.write(f"**{t}** 주가 추이")
+                                st.line_chart(close_s)
+                        except Exception:
+                            pass
 
 with tab3:
     st.subheader("💬 AI 심층 질의응답")
@@ -156,6 +160,7 @@ with tab3:
     if st.button("질문하기"):
         if gemini_key and 'analysis_result' in st.session_state:
             genai.configure(api_key=gemini_key)
+            # ⚡️ Gemini 3.5 모델 적용
             qa_model = genai.GenerativeModel('gemini-3.5-flash')
             qa_prompt = f"이전 분석 결과:\n{st.session_state['analysis_result']}\n\n사용자 질문: {user_q}"
             qa_res = qa_model.generate_content(qa_prompt)
@@ -181,7 +186,7 @@ with tab4:
                     df_b, stock_b = get_stock_data(stock_b_input, days=days)
                     
                     if df_a.empty or df_b.empty:
-                        st.error("종목 데이터를 가져올 수 없습니다. 입력값을 확인해 주세요.")
+                        st.error("종목 데이터를 가져올 수 없습니다. 입력한 종목명을 다시 확인해 주세요.")
                     else:
                         close_a = df_a['Close'].squeeze()
                         close_b = df_b['Close'].squeeze()
@@ -190,17 +195,18 @@ with tab4:
                         norm_b = (close_b / close_b.iloc[0] - 1) * 100
                         
                         chart_df = pd.DataFrame({
-                            stock_a: norm_a,
-                            stock_b: norm_b
+                            f"{stock_a_input}({stock_a})": norm_a,
+                            f"{stock_b_input}({stock_b})": norm_b
                         })
                         
                         st.line_chart(chart_df)
                         st.caption(f"※ 최근 {period_option} 상대 수익률 변동폭(%) 비교 차트입니다.")
                         
                         genai.configure(api_key=gemini_key)
+                        # ⚡️ Gemini 3.5 모델 적용
                         comp_model = genai.GenerativeModel('gemini-3.5-flash')
                         comp_prompt = f"""
-                        두 종목 ({stock_a_input}({stock_a}) vs {stock_b_input}({stock_b}))을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
+                        두 종목 ({stock_a_input} vs {stock_b_input})을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
                         - 최근 모멘텀 및 실적 비교
                         - 주요 리스크 요인
                         - 최종 투자 매력도 승자 판정 (종목명 명시) 및 이유 3가지
