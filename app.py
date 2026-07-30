@@ -10,15 +10,26 @@ import urllib.parse
 # Page Configuration
 st.set_page_config(page_title="AI Hot 뉴스 & 주식 분석 에이전트", page_icon="📈", layout="wide")
 
-# 사이드바: API 키 및 설정
+
+# 사이드바: Secrets 키 자동 로딩 및 수동 입력 지원
 with st.sidebar:
     st.header("⚙️ API 키 설정")
-    gemini_key = st.text_input("Gemini API Key", type="password")
-    naver_client_id = st.text_input("Naver Client ID", type="password")
-    naver_client_secret = st.text_input("Naver Client Secret", type="password")
+    
+    # Streamlit Secrets에 저장된 키가 있으면 기본값으로 가져옴
+    default_gemini = st.secrets.get("GEMINI_KEY", "")
+    default_naver_id = st.secrets.get("NAVER_CLIENT_ID", "")
+    default_naver_secret = st.secrets.get("NAVER_CLIENT_SECRET", "")
+    
+    gemini_key = st.text_input("Gemini API Key", value=default_gemini, type="password")
+    naver_client_id = st.text_input("Naver Client ID", value=default_naver_id, type="password")
+    naver_client_secret = st.text_input("Naver Client Secret", value=default_naver_secret, type="password")
+    
     st.markdown("---")
-    st.caption("Google AI Studio 및 Naver Developers에서 무료로 발급받은 키를 입력하세요.")
-
+    if gemini_key and naver_client_id and naver_client_secret:
+        st.success("✅ API 키가 연결되었습니다.")
+    else:
+        st.warning("⚠️ API 키를 설정해 주세요.")
+        
 # 메인 타이틀
 st.title("📈 AI Hot 뉴스 & 글로벌 주식 추천/비교 에이전트")
 st.caption("관심 분야를 입력하면 최신 Hot 뉴스 분석, 수혜주 추천, 그리고 라이벌 종목 1:1 비교 분석을 제공합니다.")
