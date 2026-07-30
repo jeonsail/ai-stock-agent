@@ -55,7 +55,7 @@ if st.button("🚀 AI 분석 및 종목 추천 시작", type="primary"):
     else:
         # Gemini API 설정
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         with st.spinner("최신 뉴스를 수집하고 AI가 시장을 분석 중입니다..."):
             news_items = get_naver_news(keyword, naver_client_id, naver_client_secret)
@@ -116,7 +116,7 @@ with tab3:
     if st.button("질문하기"):
         if gemini_key and 'analysis_result' in st.session_state:
             genai.configure(api_key=gemini_key)
-            qa_model = genai.GenerativeModel('gemini-1.5-flash')
+            qa_model = genai.GenerativeModel('gemini-2.5-flash')
             qa_prompt = f"이전 분석 결과:\n{st.session_state['analysis_result']}\n\n사용자 질문: {user_q}"
             qa_res = qa_model.generate_content(qa_prompt)
             st.info(qa_res.text)
@@ -156,7 +156,7 @@ with tab4:
                     
                     # AI 비교 판정
                     genai.configure(api_key=gemini_key)
-                    comp_model = genai.GenerativeModel('gemini-1.5-flash')
+                    comp_model = genai.GenerativeModel('gemini-2.5-flash')
                     comp_prompt = f"""
                     두 종목 ({stock_a} vs {stock_b})을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
                     - 최근 모멘텀 및 실적 비교
