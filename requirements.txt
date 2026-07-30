@@ -3,4 +3,4 @@ requests
 google-generativeai
 yfinance
 pandas
-beautifulsoup4
+plotly
