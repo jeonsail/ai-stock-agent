@@ -3,48 +3,10 @@ import requests
 import google.generativeai as genai
 import yfinance as yf
 import pandas as pd
-import FinanceDataReader as fdr
 from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+import urllib.parse
 
-@st.cache_data
-def get_krx_stock_list():
-    df = fdr.StockListing('KRX')
-    # {종목명: 티커} 형태의 사전 생성 (예: '삼성전자' -> '005930.KS')
-    krx_map = {}
-    for _, row in df.iterrows():
-        market_suffix = ".KQ" if row['Market'] == 'KOSDAQ' else ".KS"
-        krx_map[row['Name']] = f"{row['Code']}{market_suffix}"
-    return krx_map
-
-# 해외 주요 종목 및 기본 맵핑
-OVERSEAS_MAP = {
-    "엔비디아": "NVDA", "인텔": "INTC", "애플": "AAPL", "테슬라": "TSLA",
-    "마이크로소프트": "MSFT", "구글": "GOOGL", "아마존": "AMZN", "메타": "META",
-    "AMD": "AMD", "TSMC": "TSM", "브로드컴": "AVGO", "ASML": "ASML"
-}
-
-def get_stock_data(ticker_input, days=30):
-    ticker_clean = ticker_input.strip()
-    krx_map = get_krx_stock_list()
-    
-    # 1. 한국 전체 상장 종목 이름 검색
-    if ticker_clean in krx_map:
-        ticker = krx_map[ticker_clean]
-    # 2. 해외 주요 종목 이름 검색
-    elif ticker_clean in OVERSEAS_MAP:
-        ticker = OVERSEAS_MAP[ticker_clean]
-    # 3. 6자리 숫자 코드 입력 시
-    elif len(ticker_clean) == 6 and ticker_clean.isdigit():
-        ticker = f"{ticker_clean}.KS"
-    # 4. 티커 그대로 입력 시 (NVDA, INTC 등)
-    else:
-        ticker = ticker_clean.upper()
-        
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    df = yf.download(ticker, start=start_date, end=end_date)
-    return df, ticker
-    
 # Page Configuration
 st.set_page_config(page_title="AI Hot 뉴스 & 주식 분석 에이전트", page_icon="📈", layout="wide")
 
@@ -61,6 +23,54 @@ with st.sidebar:
 st.title("📈 AI Hot 뉴스 & 글로벌 주식 추천/비교 에이전트")
 st.caption("관심 분야를 입력하면 최신 Hot 뉴스 분석, 수혜주 추천, 그리고 라이벌 종목 1:1 비교 분석을 제공합니다.")
 
+# 해외 주요 종목 맵핑
+OVERSEAS_MAP = {
+    "엔비디아": "NVDA", "인텔": "INTC", "애플": "AAPL", "테슬라": "TSLA",
+    "마이크로소프트": "MSFT", "구글": "GOOGL", "알파벳": "GOOGL", "아마존": "AMZN",
+    "메타": "META", "AMD": "AMD", "TSMC": "TSM", "브로드컴": "AVGO", "ASML": "ASML"
+}
+
+# 한글 종목명으로 네이버 증권에서 종목코드 자동 검색
+@st.cache_data
+def search_krx_ticker(keyword):
+    try:
+        url = f"https://finance.naver.com/search/searchList.naver?query={urllib.parse.quote(keyword, encoding='euc-kr')}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers)
+        soup = BeautifulSoup(res.text, "html.parser")
+        
+        # 검색 결과 중 첫 번째 종목 가져오기
+        target = soup.select_one("td.tit > a")
+        if target:
+            code = target['href'].split("code=")[-1]
+            return f"{code}.KS"  # 기본 KOSPI 적용 (yfinance 자동 추적)
+    except Exception:
+        pass
+    return None
+
+# 주가 데이터 가져오기 함수 (한글/영문/숫자 통합 처리)
+def get_stock_data(ticker_input, days=30):
+    ticker_clean = ticker_input.strip()
+    
+    # 1. 해외 주요 종목 한글 검색
+    if ticker_clean in OVERSEAS_MAP:
+        ticker = OVERSEAS_MAP[ticker_clean]
+    # 2. 6자리 숫자 코드
+    elif len(ticker_clean) == 6 and ticker_clean.isdigit():
+        ticker = f"{ticker_clean}.KS"
+    # 3. 영문 티커 (NVDA, INTC, 005930.KS 등)
+    elif ticker_clean.isupper() and ("." in ticker_clean or len(ticker_clean) <= 5):
+        ticker = ticker_clean
+    # 4. 한국 종목명 한글 검색 (네이버 증권 자동 탐색)
+    else:
+        searched_ticker = search_krx_ticker(ticker_clean)
+        ticker = searched_ticker if searched_ticker else ticker_clean.upper()
+        
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    df = yf.download(ticker, start=start_date, end=end_date)
+    return df, ticker
+
 # 네이버 뉴스 수집 함수
 def get_naver_news(keyword, client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
@@ -74,18 +84,6 @@ def get_naver_news(keyword, client_id, client_secret):
         return response.json().get("items", [])
     return []
 
-# 주가 데이터 가져오기 함수 (yfinance - 한국 주식 자동 보정 포함)
-def get_stock_data(ticker, days=30):
-    ticker = ticker.strip().upper()
-    # 6자리 숫자만 입력된 경우 자동으로 .KS 붙여주기
-    if len(ticker) == 6 and ticker.isdigit():
-        ticker = f"{ticker}.KS"
-        
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    df = yf.download(ticker, start=start_date, end=end_date)
-    return df, ticker
-    
 # 탭 구성 (4개 탭)
 tab1, tab2, tab3, tab4 = st.tabs(["🔥 Hot 이슈 TOP 3", "📊 추천 종목 & 차트", "💬 AI 심층 Q&A", "⚔️ 1:1 라이벌 비교"])
 
@@ -98,9 +96,8 @@ if st.button("🚀 AI 분석 및 종목 추천 시작", type="primary"):
     elif not keyword:
         st.warning("분석할 키워드를 입력해 주세요.")
     else:
-        # Gemini API 설정
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-3.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         with st.spinner("최신 뉴스를 수집하고 AI가 시장을 분석 중입니다..."):
             news_items = get_naver_news(keyword, naver_client_id, naver_client_secret)
@@ -161,19 +158,19 @@ with tab3:
     if st.button("질문하기"):
         if gemini_key and 'analysis_result' in st.session_state:
             genai.configure(api_key=gemini_key)
-            qa_model = genai.GenerativeModel('gemini-3.5-flash')
+            qa_model = genai.GenerativeModel('gemini-2.5-flash')
             qa_prompt = f"이전 분석 결과:\n{st.session_state['analysis_result']}\n\n사용자 질문: {user_q}"
             qa_res = qa_model.generate_content(qa_prompt)
             st.info(qa_res.text)
 
-# 탭 4: 1:1 라이벌 비교 (기간 선택 기능 추가!)
+# 탭 4: 1:1 라이벌 비교
 with tab4:
     st.subheader("⚔️ 종목 1:1 라이벌 비교 분석")
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        stock_a_input = st.text_input("종목 A (예: NVDA, 005930 또는 005930.KS)", value="005930.KS")
+        stock_a_input = st.text_input("종목 A (예: 삼성전자, NVDA, 005930)", value="삼성전자")
     with col2:
-        stock_b_input = st.text_input("종목 B (예: INTC, 000660 또는 000660.KS)", value="INTC")
+        stock_b_input = st.text_input("종목 B (예: SK하이닉스, INTC, 000660)", value="SK하이닉스")
     with col3:
         period_option = st.radio("차트 조회 기간", ["30일", "6개월"], index=0)
         days = 30 if period_option == "30일" else 180
@@ -182,14 +179,12 @@ with tab4:
         if gemini_key:
             with st.spinner(f"두 종목의 최근 {period_option} 주가 데이터와 AI 비교 평가를 생성 중입니다..."):
                 try:
-                    # 선택된 기간(days)으로 주가 데이터 조회 (보정된 티커 수신)
                     df_a, stock_a = get_stock_data(stock_a_input, days=days)
                     df_b, stock_b = get_stock_data(stock_b_input, days=days)
                     
                     if df_a.empty or df_b.empty:
-                        st.error("종목 데이터를 가져올 수 없습니다. 종목 코드/티커를 다시 확인해 주세요.")
+                        st.error("종목 데이터를 가져올 수 없습니다. 입력값을 확인해 주세요.")
                     else:
-                        # 0% 기준 상대 수익률 변동폭 계산
                         close_a = df_a['Close'].squeeze()
                         close_b = df_b['Close'].squeeze()
 
@@ -204,11 +199,10 @@ with tab4:
                         st.line_chart(chart_df)
                         st.caption(f"※ 최근 {period_option} 상대 수익률 변동폭(%) 비교 차트입니다.")
                         
-                        # AI 비교 판정
                         genai.configure(api_key=gemini_key)
                         comp_model = genai.GenerativeModel('gemini-2.5-flash')
                         comp_prompt = f"""
-                        두 종목 ({stock_a} vs {stock_b})을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
+                        두 종목 ({stock_a_input}({stock_a}) vs {stock_b_input}({stock_b}))을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
                         - 최근 모멘텀 및 실적 비교
                         - 주요 리스크 요인
                         - 최종 투자 매력도 승자 판정 (종목명 명시) 및 이유 3가지
