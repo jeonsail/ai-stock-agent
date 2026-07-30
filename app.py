@@ -4,6 +4,7 @@ import google.generativeai as genai
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import re
 from datetime import datetime, timedelta
 
@@ -15,7 +16,7 @@ gemini_key = st.secrets.get("GEMINI_KEY", "")
 naver_client_id = st.secrets.get("NAVER_CLIENT_ID", "")
 naver_client_secret = st.secrets.get("NAVER_CLIENT_SECRET", "")
 
-# 주요 종목 한글-티커 맵핑 테이블 (엔디비아 오타 보정 포함)
+# 주요 종목 한글-티커 빠른 맵핑 테이블
 STOCK_MAP = {
     # 국내 주요 종목
     "삼성전자": "005930.KS", "SK하이닉스": "000660.KS", "한미반도체": "042700.KS",
@@ -23,36 +24,55 @@ STOCK_MAP = {
     "LG에너지솔루션": "373220.KS", "삼성바이오로직스": "207940.KS", "알테오젠": "196170.KQ",
     "에코프로비엠": "247540.KQ", "에코프로": "086520.KQ", "포스코홀딩스": "005490.KS",
     
-    # 해외 주요 종목 (오타 포함)
+    # 해외 주요 종목
     "엔비디아": "NVDA", "엔디비아": "NVDA", "인텔": "INTC", "애플": "AAPL", "테슬라": "TSLA",
     "마이크로소프트": "MSFT", "구글": "GOOGL", "알파벳": "GOOGL", "아마존": "AMZN",
     "메타": "META", "AMD": "AMD", "TSMC": "TSM", "브로드컴": "AVGO", "ASML": "ASML",
     "마이크론": "MU", "마이크론 테크놀로지": "MU", "퀄컴": "QCOM"
 }
 
-# 주가 데이터 가져오기 및 단방향 Series 변환 함수
+# STOCK_MAP에 없는 종목 검색 시 야후 파이낸스 검색 API 예외 처리
+def search_ticker_fallback(query):
+    try:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            quotes = res.json().get('quotes', [])
+            if quotes:
+                return quotes[0]['symbol']
+    except Exception:
+        pass
+    return query
+
+# 주가 데이터 가져오기 함수 (자동 검색 파이프라인 적용)
 def get_stock_data(ticker_input, days=30):
     ticker_clean = ticker_input.strip()
     
+    # 1. 맵핑 사전 검색
     if ticker_clean in STOCK_MAP:
         ticker = STOCK_MAP[ticker_clean]
+    # 2. 6자리 숫자인 경우 KOSPI(.KS) 기본 부여
     elif len(ticker_clean) == 6 and ticker_clean.isdigit():
         ticker = f"{ticker_clean}.KS"
+    # 3. 영문 티커 직접 입력 시
+    elif ticker_clean.isupper() and ("." in ticker_clean or len(ticker_clean) <= 5):
+        ticker = ticker_clean
+    # 4. 사전에 없는 한글 종목명 등 ➔ 야후 파이낸스 검색 API로 자동 추출
     else:
-        ticker = ticker_clean.upper()
+        searched_ticker = search_ticker_fallback(ticker_clean)
+        ticker = searched_ticker if searched_ticker else ticker_clean.upper()
         
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
     
-    # yfinance 데이터 호출
     df = yf.download(ticker, start=start_date, end=end_date, progress=False)
     
-    # MultiIndex 컬럼일 경우 단순화 처리
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
         
-    currency = "원(₩)" if ticker.endswith(".KS") or ticker.endswith(".KQ") else "달러($)"
-    return df, ticker, currency
+    symbol = "₩" if ticker.endswith(".KS") or ticker.endswith(".KQ") else "$"
+    return df, ticker, symbol
 
 # 네이버 뉴스 수집 함수
 def get_naver_news(keyword, client_id, client_secret):
@@ -149,12 +169,12 @@ if 'analysis_result' in st.session_state:
             tickers = re.findall(r'티커:\s*([A-Za-z0-9.]+)', result_text)
             if tickers:
                 st.markdown("---")
-                st.subheader("📈 추천 종목 최근 30일 주가 봉차트 (Candlestick)")
+                st.subheader("📈 추천 종목 최근 30일 주가 봉차트")
                 chart_cols = st.columns(min(len(tickers), 2))
                 for idx, t in enumerate(tickers):
                     with chart_cols[idx % 2]:
                         try:
-                            df, valid_ticker, currency = get_stock_data(t, days=30)
+                            df, valid_ticker, sym = get_stock_data(t, days=30)
                             if not df.empty and all(k in df.columns for k in ['Open', 'High', 'Low', 'Close']):
                                 fig = go.Figure(data=[go.Candlestick(
                                     x=df.index,
@@ -165,14 +185,13 @@ if 'analysis_result' in st.session_state:
                                     name=valid_ticker
                                 )])
                                 fig.update_layout(
-                                    title=f"{t} ({valid_ticker}) 최근 30일 봉차트 [통화: {currency}]",
-                                    yaxis_title=f"주가 ({currency})",
+                                    title=f"{t} ({valid_ticker}) 주가 ({sym})",
+                                    yaxis_title=f"주가 ({sym})",
                                     xaxis_rangeslider_visible=False,
                                     margin=dict(l=10, r=10, t=40, b=10),
                                     height=350
                                 )
-                                # Y축 범위를 주가 변동 폭에 맞게 자동 조정 (0부터 시작 금지)
-                                fig.update_yaxes(autorange=True, fixedrange=False)
+                                fig.update_yaxes(autorange=True, fixedrange=False, tickformat="d")
                                 st.plotly_chart(fig, use_container_width=True)
                         except Exception as e:
                             st.caption(f"{t} 차트 로딩 실패: {e}")
@@ -204,37 +223,41 @@ with tab4:
         if gemini_key:
             with st.spinner(f"두 종목의 최근 {period_option} 주가 데이터와 AI 비교 평가를 생성 중입니다..."):
                 try:
-                    df_a, stock_a, curr_a = get_stock_data(stock_a_input, days=days)
-                    df_b, stock_b, curr_b = get_stock_data(stock_b_input, days=days)
+                    df_a, stock_a, sym_a = get_stock_data(stock_a_input, days=days)
+                    df_b, stock_b, sym_b = get_stock_data(stock_b_input, days=days)
                     
                     if df_a.empty or df_b.empty:
                         st.error("종목 데이터를 가져올 수 없습니다. 입력한 종목명을 다시 확인해 주세요.")
                     else:
-                        close_a = df_a['Close']
-                        close_b = df_b['Close']
-
-                        # 상대 수익률 변동폭(%) 계산
-                        norm_a = (close_a / close_a.iloc[0] - 1) * 100
-                        norm_b = (close_b / close_b.iloc[0] - 1) * 100
+                        fig = make_subplots(rows=1, cols=2, subplot_titles=(
+                            f"{stock_a_input} ({stock_a}) 주가 ({sym_a})",
+                            f"{stock_b_input} ({stock_b}) 주가 ({sym_b})"
+                        ))
                         
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=df_a.index, y=norm_a, mode='lines', name=f"{stock_a_input}({stock_a}) [{curr_a}]"))
-                        fig.add_trace(go.Scatter(x=df_b.index, y=norm_b, mode='lines', name=f"{stock_b_input}({stock_b}) [{curr_b}]"))
+                        fig.add_trace(go.Candlestick(
+                            x=df_a.index, open=df_a['Open'], high=df_a['High'], low=df_a['Low'], close=df_a['Close'],
+                            name=f"{stock_a_input}"
+                        ), row=1, col=1)
+                        
+                        fig.add_trace(go.Candlestick(
+                            x=df_b.index, open=df_b['Open'], high=df_b['High'], low=df_b['Low'], close=df_b['Close'],
+                            name=f"{stock_b_input}"
+                        ), row=1, col=2)
                         
                         fig.update_layout(
-                            title=f"상대 수익률 변동폭(%) 비교 ({period_option})",
-                            yaxis_title="수익률 변동폭 (%)",
+                            xaxis_rangeslider_visible=False,
+                            xaxis2_rangeslider_visible=False,
                             height=400,
+                            showlegend=False,
                             margin=dict(l=10, r=10, t=40, b=10)
                         )
-                        fig.update_yaxes(autorange=True, fixedrange=False)
+                        fig.update_yaxes(autorange=True, fixedrange=False, tickformat="d")
                         st.plotly_chart(fig, use_container_width=True)
-                        st.caption(f"※ 최근 {period_option} 상대 수익률 변동폭(%) 비교 차트입니다. 각 종목의 원본 통화 단위가 표시되어 있습니다.")
                         
                         genai.configure(api_key=gemini_key)
                         comp_model = genai.GenerativeModel('gemini-3.5-flash')
                         comp_prompt = f"""
-                        두 종목 ({stock_a_input}({stock_a}, 단치: {curr_a}) vs {stock_b_input}({stock_b}, 단위: {curr_b}))을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
+                        두 종목 ({stock_a_input}({stock_a}, 통화: {sym_a}) vs {stock_b_input}({stock_b}, 통화: {sym_b}))을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
                         - 최근 모멘텀 및 실적 비교
                         - 주요 리스크 요인
                         - 최종 투자 매력도 승자 판정 (종목명 명시) 및 이유 3가지
