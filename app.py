@@ -10,29 +10,10 @@ import urllib.parse
 # Page Configuration
 st.set_page_config(page_title="AI Hot 뉴스 & 주식 분석 에이전트", page_icon="📈", layout="wide")
 
-
-# 사이드바: Secrets 키 자동 로딩 및 수동 입력 지원
-with st.sidebar:
-    st.header("⚙️ API 키 설정")
-    
-    # Streamlit Secrets에 저장된 키가 있으면 기본값으로 가져옴
-    default_gemini = st.secrets.get("GEMINI_KEY", "")
-    default_naver_id = st.secrets.get("NAVER_CLIENT_ID", "")
-    default_naver_secret = st.secrets.get("NAVER_CLIENT_SECRET", "")
-    
-    gemini_key = st.text_input("Gemini API Key", value=default_gemini, type="password")
-    naver_client_id = st.text_input("Naver Client ID", value=default_naver_id, type="password")
-    naver_client_secret = st.text_input("Naver Client Secret", value=default_naver_secret, type="password")
-    
-    st.markdown("---")
-    if gemini_key and naver_client_id and naver_client_secret:
-        st.success("✅ API 키가 연결되었습니다.")
-    else:
-        st.warning("⚠️ API 키를 설정해 주세요.")
-        
-# 메인 타이틀
-st.title("📈 AI Hot 뉴스 & 글로벌 주식 추천/비교 에이전트")
-st.caption("관심 분야를 입력하면 최신 Hot 뉴스 분석, 수혜주 추천, 그리고 라이벌 종목 1:1 비교 분석을 제공합니다.")
+# Streamlit Secrets에서 API 키 자동 로딩
+gemini_key = st.secrets.get("GEMINI_KEY", "")
+naver_client_id = st.secrets.get("NAVER_CLIENT_ID", "")
+naver_client_secret = st.secrets.get("NAVER_CLIENT_SECRET", "")
 
 # 해외 주요 종목 맵핑
 OVERSEAS_MAP = {
@@ -50,29 +31,24 @@ def search_krx_ticker(keyword):
         res = requests.get(url, headers=headers)
         soup = BeautifulSoup(res.text, "html.parser")
         
-        # 검색 결과 중 첫 번째 종목 가져오기
         target = soup.select_one("td.tit > a")
         if target:
             code = target['href'].split("code=")[-1]
-            return f"{code}.KS"  # 기본 KOSPI 적용 (yfinance 자동 추적)
+            return f"{code}.KS"
     except Exception:
         pass
     return None
 
-# 주가 데이터 가져오기 함수 (한글/영문/숫자 통합 처리)
+# 주가 데이터 가져오기 함수
 def get_stock_data(ticker_input, days=30):
     ticker_clean = ticker_input.strip()
     
-    # 1. 해외 주요 종목 한글 검색
     if ticker_clean in OVERSEAS_MAP:
         ticker = OVERSEAS_MAP[ticker_clean]
-    # 2. 6자리 숫자 코드
     elif len(ticker_clean) == 6 and ticker_clean.isdigit():
         ticker = f"{ticker_clean}.KS"
-    # 3. 영문 티커 (NVDA, INTC, 005930.KS 등)
     elif ticker_clean.isupper() and ("." in ticker_clean or len(ticker_clean) <= 5):
         ticker = ticker_clean
-    # 4. 한국 종목명 한글 검색 (네이버 증권 자동 탐색)
     else:
         searched_ticker = search_krx_ticker(ticker_clean)
         ticker = searched_ticker if searched_ticker else ticker_clean.upper()
@@ -95,26 +71,37 @@ def get_naver_news(keyword, client_id, client_secret):
         return response.json().get("items", [])
     return []
 
+# 👈 [좌측 사이드바 구성] API 입력란을 지우고 관심 분야 입력으로 교체
+with st.sidebar:
+    st.header("🔍 관심 분야 입력")
+    keyword = st.text_input("분석할 키워드를 입력하세요", placeholder="예: 반도체, 2차전지, 로봇 등")
+    analyze_btn = st.button("🚀 AI 분석 및 종목 추천 시작", type="primary", use_container_width=True)
+    
+    st.markdown("---")
+    st.caption("AI가 최신 네이버 뉴스 이슈 분석 및 글로벌 수혜주를 추천해 드립니다.")
+
+# 메인 타이틀
+st.title("📈 AI Hot 뉴스 & 글로벌 주식 추천/비교 에이전트")
+st.caption("좌측 사이드바에 관심 분야를 입력하면 최신 Hot 뉴스 분석, 수혜주 추천, 그리고 라이벌 종목 1:1 비교 분석을 제공합니다.")
+
 # 탭 구성 (4개 탭)
 tab1, tab2, tab3, tab4 = st.tabs(["🔥 Hot 이슈 TOP 3", "📊 추천 종목 & 차트", "💬 AI 심층 Q&A", "⚔️ 1:1 라이벌 비교"])
 
-# 사용자 키워드 입력
-keyword = st.text_input("관심 분야 또는 키워드를 입력하세요", placeholder="예: 반도체, 2차전지, 로봇, 경제 등")
-
-if st.button("🚀 AI 분석 및 종목 추천 시작", type="primary"):
+# 분석 실행 로직 (사이드바 버튼 클릭 시)
+if analyze_btn:
     if not (gemini_key and naver_client_id and naver_client_secret):
-        st.error("사이드바에 모든 API 키를 먼저 입력해 주세요!")
+        st.error("Streamlit Secrets에 API 키 설정이 필요합니다.")
     elif not keyword:
-        st.warning("분석할 키워드를 입력해 주세요.")
+        st.warning("사이드바에 관심 분야/키워드를 입력해 주세요.")
     else:
         genai.configure(api_key=gemini_key)
         model = genai.GenerativeModel('gemini-2.5-flash')
         
-        with st.spinner("최신 뉴스를 수집하고 AI가 시장을 분석 중입니다..."):
+        with st.spinner(f"'{keyword}' 관련 최신 뉴스를 수집하고 AI가 시장을 분석 중입니다..."):
             news_items = get_naver_news(keyword, naver_client_id, naver_client_secret)
             
             if not news_items:
-                st.error("뉴스를 가져오지 못했습니다. API 키나 검색어를 확인해 주세요.")
+                st.error("뉴스를 가져오지 못했습니다. 키워드를 확인해 주세요.")
             else:
                 prompt = f"""
                 너는 글로벌 IT/금융 전문 AI 에이전트이다.
