@@ -121,22 +121,28 @@ with tab3:
             qa_res = qa_model.generate_content(qa_prompt)
             st.info(qa_res.text)
 
+# 탭 4: 1:1 라이벌 비교 (기간 선택 기능 추가!)
 with tab4:
     st.subheader("⚔️ 종목 1:1 라이벌 비교 분석")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
         stock_a = st.text_input("종목 A (예: NVDA, 005930.KS)", value="005930.KS")
     with col2:
         stock_b = st.text_input("종목 B (예: INTC, 000660.KS)", value="INTC")
-        
+    with col3:
+        # 차트 기간 선택 라디오 버튼 (기본 30일)
+        period_option = st.radio("차트 조회 기간", ["30일", "6개월"], index=0)
+        days = 30 if period_option == "30일" else 180
+
     if st.button("1:1 비교 분석 실행"):
         if gemini_key:
-            with st.spinner("두 종목의 주가 데이터와 AI 비교 평가를 생성 중입니다..."):
+            with st.spinner(f"두 종목의 최근 {period_option} 주가 데이터와 AI 비교 평가를 생성 중입니다..."):
                 try:
-                    # 주가 차트 그리기 (수익률 % 기준)
-                    df_a = get_stock_data(stock_a)
-                    df_b = get_stock_data(stock_b)
+                    # 선택된 기간(days)으로 주가 데이터 조회
+                    df_a = get_stock_data(stock_a, days=days)
+                    df_b = get_stock_data(stock_b, days=days)
                     
+                    # 0% 기준 상대 수익률 변동폭 계산
                     norm_a = (df_a['Close'] / df_a['Close'].iloc[0] - 1) * 100
                     norm_b = (df_b['Close'] / df_b['Close'].iloc[0] - 1) * 100
                     
@@ -146,13 +152,13 @@ with tab4:
                     })
                     
                     st.line_chart(chart_df)
-                    st.caption("※ 최근 30일 상대 수익률 변동폭(%) 비교 차트입니다.")
+                    st.caption(f"※ 최근 {period_option} 상대 수익률 변동폭(%) 비교 차트입니다.")
                     
                     # AI 비교 판정
                     genai.configure(api_key=gemini_key)
                     comp_model = genai.GenerativeModel('gemini-1.5-flash')
                     comp_prompt = f"""
-                    두 종목 ({stock_a} vs {stock_b})을 1:1로 비교 분석하라.
+                    두 종목 ({stock_a} vs {stock_b})을 1:1로 비교 분석하라. (최근 {period_option} 추세 반영)
                     - 최근 모멘텀 및 실적 비교
                     - 주요 리스크 요인
                     - 최종 투자 매력도 승자 판정 (종목명 명시) 및 이유 3가지
