@@ -3,4 +3,4 @@ requests
 google-generativeai
 yfinance
 pandas
-FinanceDataReader
+beautifulsoup4
